@@ -1,0 +1,21 @@
+<%#
+# cqlshrc Configuration Template
+# Managed by Puppet - profile_ggonda_cassandr
+# Configures cqlsh to connect to Cassandra with authentication.
+%>
+
+[authentication]
+username = cassandra
+password = <%= @cassandra_password %>
+
+[connection]
+# Use the local IP for cqlsh connections
+host = <%= @::ipaddress %>
+port = 9042
+
+[ui]
+# Display timestamps in UTC
+datetime_format = %Y-%m-%d %H:%M:%S%z
+
+# Other useful settings can be added here
+# request_timeout = 10

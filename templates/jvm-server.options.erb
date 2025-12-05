@@ -1,0 +1,123 @@
+<%#
+# JVM Server Options Template
+# Managed by Puppet - profile_ggonda_cassandr
+# This file is sourced by Cassandra's startup script to configure the JVM.
+%>
+
+# Heap Sizing
+-Xms<%= @max_heap_size %>
+-Xmx<%= @max_heap_size %>
+
+# GC Options
+<% if @gc_type == 'G1GC' -%>
+-XX:+UseG1GC
+-XX:G1HeapRegionSize=16M
+-XX:MaxGCPauseMillis=500
+-XX:InitiatingHeapOccupancyPercent=75
+-XX:+ParallelRefProcEnabled
+-XX:+PerfDisableSharedMem
+-XX:+UseTLAB
+-XX:CompileCommandFile=../etc/cassandra/conf/hotspot_compiler
+<% if @java_version.to_i >= 11 -%>
+-Xlog:gc*=info,heap*=info,age*=info,safepoint*=info:file=/var/log/cassandra/gc.log:time,uptime,pid,tid,level:filecount=10,filesize=100M
+-XX:+ExitOnOutOfMemoryError
+-XX:+CrashOnOutOfMemoryError
+<% else -%>
+-Xloggc:/var/log/cassandra/gc.log
+-XX:+PrintGCDetails
+-XX:+PrintGCDateStamps
+-XX:+PrintHeapAtGC
+-XX:+PrintTenuringDistribution
+-XX:+PrintGCCause
+-XX:+PrintGCApplicationStoppedTime
+-XX:+PrintGCApplicationConcurrentTime
+-XX:+UseGCLogFileRotation
+-XX:NumberOfGCLogFiles=10
+-XX:GCLogFileSize=100M
+-XX:+HeapDumpOnOutOfMemoryError
+-XX:HeapDumpPath=/var/lib/cassandra/java_heap_dumps
+<% end -%>
+<% elsif @gc_type == 'CMS' -%>
+-XX:+UseConcMarkSweepGC
+-XX:+CMSParallelRemarkEnabled
+-XX:CMSInitiatingOccupancyFraction=75
+-XX:+UseCMSInitiatingOccupancyOnly
+-XX:CMSWaitDuration=10000
+-XX:+UseParNewGC
+-XX:+CMSScavengeBeforeRemark
+-XX:+ParallelRefProcEnabled
+<% if @java_version.to_i >= 11 -%>
+-Xlog:gc*=info,heap*=info,age*=info,safepoint*=info:file=/var/log/cassandra/gc.log:time,uptime,pid,tid,level:filecount=10,filesize=100M
+-XX:+ExitOnOutOfMemoryError
+-XX:+CrashOnOutOfMemoryError
+<% else -%>
+-Xloggc:/var/log/cassandra/gc.log
+-XX:+PrintGCDetails
+-XX:+PrintGCDateStamps
+-XX:+PrintHeapAtGC
+-XX:+PrintTenuringDistribution
+-XX:+PrintGCCause
+-XX:+PrintGCApplicationStoppedTime
+-XX:+PrintGCApplicationConcurrentTime
+-XX:+UseGCLogFileRotation
+-XX:NumberOfGCLogFiles=10
+-XX:GCLogFileSize=100M
+-XX:+HeapDumpOnOutOfMemoryError
+-XX:HeapDumpPath=/var/lib/cassandra/java_heap_dumps
+<% end -%>
+<% else -%>
+# No specific GC type provided, using default G1GC options for Cassandra 4.x+
+-XX:+UseG1GC
+-XX:G1HeapRegionSize=16M
+-XX:MaxGCPauseMillis=500
+-XX:InitiatingHeapOccupancyPercent=75
+-XX:+ParallelRefProcEnabled
+-XX:+PerfDisableSharedMem
+-XX:+UseTLAB
+-XX:CompileCommandFile=../etc/cassandra/conf/hotspot_compiler
+<% if @java_version.to_i >= 11 -%>
+-Xlog:gc*=info,heap*=info,age*=info,safepoint*=info:file=/var/log/cassandra/gc.log:time,uptime,pid,tid,level:filecount=10,filesize=100M
+-XX:+ExitOnOutOfMemoryError
+-XX:+CrashOnOutOfMemoryError
+<% else -%>
+-Xloggc:/var/log/cassandra/gc.log
+-XX:+PrintGCDetails
+-XX:+PrintGCDateStamps
+-XX:+PrintHeapAtGC
+-XX:+PrintTenuringDistribution
+-XX:+PrintGCCause
+-XX:+PrintGCApplicationStoppedTime
+-XX:+PrintGCApplicationConcurrentTime
+-XX:+UseGCLogFileRotation
+-XX:NumberOfGCLogFiles=10
+-XX:GCLogFileSize=100M
+-XX:+HeapDumpOnOutOfMemoryError
+-XX:HeapDumpPath=/var/lib/cassandra/java_heap_dumps
+<% end -%>
+<% end -%>
+
+# General JVM options
+-Dcassandra.jmx.local.port=7199
+-Dcom.sun.management.jmxremote.port=7199
+-Dcom.sun.management.jmxremote.rmi.port=7199
+-Dcom.sun.management.jmxremote.authenticate=false
+-Dcom.sun.management.jmxremote.password.file=/etc/cassandra/conf/jmxremote.password
+-Dcom.sun.management.jmxremote.access.file=/etc/cassandra/conf/jmxremote.access
+-Dcom.sun.management.jmxremote.ssl=false
+-Djava.net.preferIPv4Stack=true
+-Dcom.datastax.bdp.cassandra.jamm.enabled=true
+
+# Jamm agent (requires jamm-0.3.2.jar in the classpath or managed by -javaagent)
+-javaagent:/usr/share/cassandra/lib/jamm-0.3.2.jar
+
+# This is specific for replacing a dead node with a new IP address.
+<% if @replace_dead_node_ip and !@replace_dead_node_ip.empty? -%>
+-Dcassandra.replace_address_first_boot=<%= @replace_dead_node_ip %>
+<% end -%>
+
+# Other common options
+-ea # Enable assertions
+-Dlogback.configurationFile=logback.xml
+-Dlogback.defaultConfigurationFile=logback-default.xml
+-Djava.awt.headless=true
+-Djdk.attach.allowAttachSelf=true

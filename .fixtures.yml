@@ -1,0 +1,7 @@
+---{
+  "repositories": {
+    "profile_ggonda_cassandr": {
+      "symlink": "${source_dir}"
+    }
+  }
+}

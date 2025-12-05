@@ -1,0 +1,35 @@
+{
+  "name": "profile_ggonda_cassandr",
+  "version": "2.1.0",
+  "author": "ggonda",
+  "license": "Apache-2.0",
+  "summary": "Puppet profile for managing Apache Cassandra deployment",
+  "source": "https://github.com/ggonda/profile_ggonda_cassandr",
+  "project_page": "https://github.com/ggonda/profile_ggonda_cassandr",
+  "issues_url": "https://github.com/ggonda/profile_ggonda_cassandr/issues",
+  "operatingsystem_support": [
+    {
+      "operatingsystem": "CentOS",
+      "operatingsystemrelease": [
+        "7",
+        "8",
+        "9"
+      ]
+    },
+    {
+      "operatingsystem": "RedHat",
+      "operatingsystemrelease": [
+        "7",
+        "8",
+        "9"
+      ]
+    }
+  ],
+  "requirements": [
+    {
+      "name": "puppet",
+      "version_requirement": ">= 3.0.0 < 9.0.0"
+    }
+  ],
+  "dependencies": []
+}

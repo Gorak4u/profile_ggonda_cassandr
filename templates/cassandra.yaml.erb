@@ -1,0 +1,69 @@
+<%#
+# Cassandra YAML Configuration Template
+# Managed by Puppet - profile_ggonda_cassandr
+%>
+
+cluster_name: '<%= @cluster_name %>'
+
+# Network Interfaces
+listen_address: <%= @::ipaddress %>
+rpc_address: <%= @::ipaddress %>
+
+start_rpc: <% if split(@cassandra_version, '.')[0].to_i < 4 -%>true<% else -%>false<% end -%>
+
+# Ports
+storage_port: 7000
+ssl_storage_port: 7001
+native_transport_port: 9042
+rpc_port: 9160
+
+speculative_retry: 99PERCENTILE
+
+# Seed nodes
+seed_provider:
+    - class_name: org.apache.cassandra.locator.SimpleSeedProvider
+      parameters:
+          - seeds: "<%= @seeds %>"
+
+# Data and Commitlog Directories
+data_file_directories:
+    - <%= @data_dir %>
+commitlog_directory: <%= @commitlog_dir %>
+cassandra_disk_access_mode: auto
+
+# Heap settings - refer to jvm-server.options for actual heap configuration
+# These are often overridden or derived. Included for C* compat.
+# -Xms<%= @max_heap_size %>
+# -Xmx<%= @max_heap_size %>
+
+# Authenticator and Authorizer
+authenticator: org.apache.cassandra.auth.PasswordAuthenticator
+authorizer: org.apache.cassandra.auth.CassandraAuthorizer
+
+# Snitch and Partitioner
+endpoint_snitch: GossipingPropertyFileSnitch
+partitioner: org.apache.cassandra.dht.Murmur3Partitioner
+
+# Compaction
+compaction_throughput_mb_per_sec: 16
+
+# Caching
+key_cache_size_in_mb: <%= (@max_heap_size.gsub('G','').to_i * 0.05 * 1024).to_i if @max_heap_size =~ /G/ else (@max_heap_size.gsub('M','').to_i * 0.05).to_i %> # ~5% of heap
+row_cache_size_in_mb: 0 # Usually disabled
+
+# Other settings
+auto_snapshot: true
+commitlog_sync: periodic
+commitlog_sync_period_in_ms: 10000
+concurrent_reads: 32
+concurrent_writes: 32
+concurrent_compactors: 8
+
+# C* 4.x specific settings (add if condition if needed for C*3 support specifically)
+<% if split(@cassandra_version, '.')[0].to_i >= 4 -%>
+client_encryption_options:
+  enabled: false
+server_encryption_options:
+  internode_encryption: none
+  optional: false
+<% end -%>

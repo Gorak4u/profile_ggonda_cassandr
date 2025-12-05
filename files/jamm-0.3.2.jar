@@ -1,0 +1,3 @@
+# This is a placeholder for the binary JAR file.
+# Please download it from: https://repo1.maven.org/maven2/com/github/jbellis/jamm/0.3.2/jamm-0.3.2.jar
+# Then place the real binary file in the files/ directory of the module before deploying.
