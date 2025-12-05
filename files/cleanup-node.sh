@@ -1,60 +1,49 @@
 #!/bin/bash
+# Script to run 'nodetool cleanup' on the current node.
 
-# Script: cleanup-node.sh
-# Description: Runs 'nodetool cleanup' on the local Cassandra node.
-# This command removes data that no longer belongs to the node after a topology change (e.g., node removal).
+LOG_FILE="/var/log/cassandra/cleanup-node.log"
 
 usage() {
   echo "Usage: $(basename "$0") [-h|--help]"
-  echo """This script executes 'nodetool cleanup' for the local Cassandra node.
-- It is used to remove data that is no longer owned by this node, typically after a node has been decommissioned or replaced.
-- This command does not remove data if the node is still considered to own the data, regardless of replication factor.
-"""
-  exit 0
+  echo "  Runs 'nodetool cleanup' on the current Cassandra node to remove data"
+  echo "  that no longer belongs to the node's token ranges."
+  echo "  Logs cleanup start and end times to $LOG_FILE."
+  echo ""
+  echo "Options:"
+  echo "  -h, --help    Display this help message."
 }
 
-# Parse command line arguments
 while [[ "$#" -gt 0 ]]; do
-  key="$1"
-  case $key in
+  case $1 in
     -h|--help)
       usage
+      exit 0
       ;;
     *)
-      echo "Unknown option: $1"
+      echo "Unknown parameter: $1"
       usage
+      exit 1
       ;;
   esac
   shift
 done
 
-LOG_TAG="cassandra-cleanup"
-
-log_message() {
-  local level="$1"
-  local message="$2"
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$level] $message"
-  logger -t "$LOG_TAG" "[$level] $message"
+timestamp() {
+  date +"%Y-%m-%d %H:%M:%S"
 }
 
-log_message INFO "--- Starting Cassandra Node Cleanup ---"
-log_message INFO "Command: nodetool cleanup"
+log_message() {
+  echo "$(timestamp) $1" | tee -a "$LOG_FILE"
+}
 
-if command -v nodetool &> /dev/null; then
-  START_TIME=$(date +%s)
-  nodetool cleanup
-  CLEANUP_STATUS=$?
-  END_TIME=$(date +%s)
-  DURATION=$((END_TIME - START_TIME))
-
-  if [ $CLEANUP_STATUS -eq 0 ]; then
-    log_message INFO "Cassandra Node Cleanup completed successfully in ${DURATION} seconds."
-    exit 0
-  else
-    log_message ERROR "Cassandra Node Cleanup failed with exit code $CLEANUP_STATUS after ${DURATION} seconds."
-    exit 1
-  fi
-else
-  log_message ERROR "nodetool command not found. Is Cassandra installed and in PATH?"
+if ! command -v nodetool > /dev/null; then
+  log_message "Error: nodetool command not found. Please ensure Cassandra is installed."
   exit 1
-fi
+}
+
+log_message "Starting 'nodetool cleanup' at $(timestamp)"
+nodetool cleanup 2>&1 | tee -a "$LOG_FILE"
+CLEANUP_STATUS=$?
+log_message "Finished 'nodetool cleanup' at $(timestamp) with exit status $CLEANUP_STATUS"
+
+exit $CLEANUP_STATUS

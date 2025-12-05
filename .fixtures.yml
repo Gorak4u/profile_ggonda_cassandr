@@ -1,7 +1,4 @@
----{
-  "repositories": {
-    "profile_ggonda_cassandr": {
-      "symlink": "${source_dir}"
-    }
-  }
-}
+fixtures:
+  forge_modules:
+  symlinks:
+    profile_ggonda_cassandr: "#{source_dir}"

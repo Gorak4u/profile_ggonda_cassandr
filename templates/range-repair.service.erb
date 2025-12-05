@@ -1,8 +1,5 @@
-<%#
-# Systemd Unit File for Cassandra Range Repair Script
-# Managed by Puppet - profile_ggonda_cassandr
-# This unit file runs the range-repair.sh script as a daemon.
-%>
+# Systemd unit file for Cassandra Range Repair
+# Managed by Puppet, profile_ggonda_cassandr module
 
 [Unit]
 Description=Cassandra Range Repair Service
@@ -10,16 +7,16 @@ After=network.target cassandra.service
 Requires=cassandra.service
 
 [Service]
-Type=simple
+Type=forking
 User=cassandra
 Group=cassandra
 WorkingDirectory=/var/lib/cassandra
+PIDFile=/var/run/cassandra_range_repair.pid
 ExecStart=/usr/local/bin/range-repair.sh start
 ExecStop=/usr/local/bin/range-repair.sh stop
 ExecReload=/usr/local/bin/range-repair.sh restart
+TimeoutSec=600
 Restart=on-failure
-LimitNOFILE=1048575
-LimitNPROC=65535
 StandardOutput=journal
 StandardError=journal
 

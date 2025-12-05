@@ -1,83 +1,81 @@
 #!/bin/bash
+# Script to force a major compaction (garbage collection) using nodetool.
 
-# Script: garbage-collect.sh
-# Description: Initiates a major compaction (garbage collection) on Cassandra SSTables.
-# This merges SSTables to reclaim disk space and improve read performance.
+KEYSPACE_NAME=""
+TABLE_NAME=""
+LOG_FILE="/var/log/cassandra/garbage-collect.log"
 
 usage() {
-  echo "Usage: $(basename "$0") [-h|--help] [<keyspace>] [<table_name>]"
-  echo """This script executes 'nodetool garbagecollect' to force a major compaction.
-Arguments:
-  <keyspace>   (Optional) The keyspace to garbage collect. If omitted, all keyspaces will be processed.
-  <table_name> (Optional) The table within the keyspace to garbage collect. Requires <keyspace>.
-
-Options:
-  -h, --help   Display this help message and exit.
-"""
-  exit 0
+  echo "Usage: $(basename "$0") [-h|--help] [-k <keyspace>] [-tb <table>]"
+  echo "  Runs 'nodetool garbagecollect' to force a major compaction on a keyspace or table."
+  echo "  Logs start and end times to $LOG_FILE."
+  echo ""
+  echo "Options:"
+  echo "  -h, --help        Display this help message."
+  echo "  -k <keyspace>     Optional: Keyspace to garbage collect."
+  echo "  -tb <table>       Optional: Table(s) within the keyspace to garbage collect. Requires -k."
 }
 
-# Parse command line arguments
 while [[ "$#" -gt 0 ]]; do
-  key="$1"
-  case $key in
+  case $1 in
     -h|--help)
       usage
+      exit 0
+      ;;
+    -k)
+      if [ -n "$2" ] && [[ "$2" != -* ]]; then
+        KEYSPACE_NAME="$2"
+        shift
+      else
+        echo "Error: Argument for -k <keyspace> is missing."
+        usage
+        exit 1
+      fi
+      ;;
+    -tb)
+      if [ -n "$2" ] && [[ "$2" != -* ]]; then
+        TABLE_NAME="$2"
+        shift
+      else
+        echo "Error: Argument for -tb <table> is missing."
+        usage
+        exit 1
+      fi
       ;;
     *)
-      if [ -z "$KEYSPACE" ]; then
-        KEYSPACE="$1"
-      elif [ -z "$TABLE" ]; then
-        TABLE="$1"
-      else
-        echo "Error: Too many arguments." >&2
-        usage
-      fi
+      echo "Unknown parameter: $1"
+      usage
+      exit 1
       ;;
   esac
   shift
 done
 
-LOG_TAG="cassandra-gc"
-
-log_message() {
-  local level="$1"
-  local message="$2"
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$level] $message"
-  logger -t "$LOG_TAG" "[$level] $message"
+timestamp() {
+  date +"%Y-%m-%d %H:%M:%S"
 }
 
-GC_CMD="nodetool garbagecollect"
+log_message() {
+  echo "$(timestamp) $1" | tee -a "$LOG_FILE"
+}
 
-if [ -n "$KEYSPACE" ]; then
-  GC_CMD="${GC_CMD} ${KEYSPACE}"
-  if [ -n "$TABLE" ]; then
-    GC_CMD="${GC_CMD} ${TABLE}"
-    log_message INFO "--- Starting Major Compaction for keyspace '${KEYSPACE}', table '${TABLE}' ---"
-  else
-    log_message INFO "--- Starting Major Compaction for keyspace '${KEYSPACE}' ---"
-  fi
-else
-  log_message INFO "--- Starting Major Compaction for ALL keyspaces ---"
-fi
-
-log_message INFO "Command: ${GC_CMD}"
-
-if command -v nodetool &> /dev/null; then
-  START_TIME=$(date +%s)
-  ${GC_CMD}
-  GC_STATUS=$?
-  END_TIME=$(date +%s)
-  DURATION=$((END_TIME - START_TIME))
-
-  if [ $GC_STATUS -eq 0 ]; then
-    log_message INFO "Major Compaction completed successfully in ${DURATION} seconds."
-    exit 0
-  else
-    log_message ERROR "Major Compaction failed with exit code $GC_STATUS after ${DURATION} seconds."
-    exit 1
-  fi
-else
-  log_message ERROR "nodetool command not found. Is Cassandra installed and in PATH?"
+if ! command -v nodetool > /dev/null; then
+  log_message "Error: nodetool command not found. Please ensure Cassandra is installed."
   exit 1
+}
+
+GC_COMMAND="nodetool garbagecollect"
+
+if [ -n "$KEYSPACE_NAME" ]; then
+  GC_COMMAND="${GC_COMMAND} ${KEYSPACE_NAME}"
+  if [ -n "$TABLE_NAME" ]; then
+    GC_COMMAND="${GC_COMMAND} ${TABLE_NAME}"
+  fi
 fi
+
+log_message "Starting '${GC_COMMAND}' at $(timestamp)"
+eval "${GC_COMMAND}" 2>&1 | tee -a "$LOG_FILE"
+GC_STATUS=$?
+log_message "Finished '${GC_COMMAND}' at $(timestamp) with exit status $GC_STATUS"
+
+exit $GC_STATUS

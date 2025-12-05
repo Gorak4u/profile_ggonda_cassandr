@@ -1,123 +1,65 @@
-<%#
-# JVM Server Options Template
-# Managed by Puppet - profile_ggonda_cassandr
-# This file is sourced by Cassandra's startup script to configure the JVM.
-%>
+# JVM Server Options for Cassandra
+# Managed by Puppet, profile_ggonda_cassandr module
+# This file is used by Cassandra 4.x+ instead of jvm.options
 
-# Heap Sizing
+# Heap size:
 -Xms<%= @max_heap_size %>
 -Xmx<%= @max_heap_size %>
 
-# GC Options
-<% if @gc_type == 'G1GC' -%>
--XX:+UseG1GC
--XX:G1HeapRegionSize=16M
--XX:MaxGCPauseMillis=500
--XX:InitiatingHeapOccupancyPercent=75
--XX:+ParallelRefProcEnabled
--XX:+PerfDisableSharedMem
--XX:+UseTLAB
--XX:CompileCommandFile=../etc/cassandra/conf/hotspot_compiler
-<% if @java_version.to_i >= 11 -%>
--Xlog:gc*=info,heap*=info,age*=info,safepoint*=info:file=/var/log/cassandra/gc.log:time,uptime,pid,tid,level:filecount=10,filesize=100M
--XX:+ExitOnOutOfMemoryError
--XX:+CrashOnOutOfMemoryError
-<% else -%>
--Xloggc:/var/log/cassandra/gc.log
--XX:+PrintGCDetails
--XX:+PrintGCDateStamps
--XX:+PrintHeapAtGC
--XX:+PrintTenuringDistribution
--XX:+PrintGCCause
--XX:+PrintGCApplicationStoppedTime
--XX:+PrintGCApplicationConcurrentTime
--XX:+UseGCLogFileRotation
--XX:NumberOfGCLogFiles=10
--XX:GCLogFileSize=100M
--XX:+HeapDumpOnOutOfMemoryError
--XX:HeapDumpPath=/var/lib/cassandra/java_heap_dumps
-<% end -%>
-<% elsif @gc_type == 'CMS' -%>
--XX:+UseConcMarkSweepGC
+# GC configuration
+<% if @java_version == "8" %>
+-XX:+Use<%= @gc_type %>GC
 -XX:+CMSParallelRemarkEnabled
+-XX:SurvivorRatio=8
+-XX:MaxTenuringThreshold=1
+-XX:+CMSClassUnloadingEnabled
+-XX:+CMSPermGenSweepingEnabled
 -XX:CMSInitiatingOccupancyFraction=75
 -XX:+UseCMSInitiatingOccupancyOnly
--XX:CMSWaitDuration=10000
--XX:+UseParNewGC
--XX:+CMSScavengeBeforeRemark
--XX:+ParallelRefProcEnabled
-<% if @java_version.to_i >= 11 -%>
--Xlog:gc*=info,heap*=info,age*=info,safepoint*=info:file=/var/log/cassandra/gc.log:time,uptime,pid,tid,level:filecount=10,filesize=100M
--XX:+ExitOnOutOfMemoryError
--XX:+CrashOnOutOfMemoryError
-<% else -%>
--Xloggc:/var/log/cassandra/gc.log
+-XX:+HeapDumpOnOutOfMemoryError
+-XX:HeapDumpPath=/var/lib/cassandra/java_heap_dump.hprof
+# GC logging for Java 8
 -XX:+PrintGCDetails
 -XX:+PrintGCDateStamps
 -XX:+PrintHeapAtGC
 -XX:+PrintTenuringDistribution
--XX:+PrintGCCause
 -XX:+PrintGCApplicationStoppedTime
--XX:+PrintGCApplicationConcurrentTime
 -XX:+UseGCLogFileRotation
 -XX:NumberOfGCLogFiles=10
--XX:GCLogFileSize=100M
+-XX:GCLogFileSize=10M
+-Xloggc:/var/log/cassandra/gc.log
+<% elsif @java_version == "11" %>
+-XX:+Use<%= @gc_type %>GC
 -XX:+HeapDumpOnOutOfMemoryError
--XX:HeapDumpPath=/var/lib/cassandra/java_heap_dumps
-<% end -%>
-<% else -%>
-# No specific GC type provided, using default G1GC options for Cassandra 4.x+
+-XX:HeapDumpPath=/var/lib/cassandra/java_heap_dump.hprof
+# GC logging for Java 11+
+-Xlog:gc*=info,heap*=debug,age*=trace,safepoint*=info:file=/var/log/cassandra/gc.log:time,uptime,pid,level,tags:filecount=10,filesize=10M
+<% else %>
+# Fallback for other Java versions or if GC type is not specified
+# Recommend using G1GC for modern Cassandra
 -XX:+UseG1GC
--XX:G1HeapRegionSize=16M
--XX:MaxGCPauseMillis=500
--XX:InitiatingHeapOccupancyPercent=75
--XX:+ParallelRefProcEnabled
--XX:+PerfDisableSharedMem
--XX:+UseTLAB
--XX:CompileCommandFile=../etc/cassandra/conf/hotspot_compiler
-<% if @java_version.to_i >= 11 -%>
--Xlog:gc*=info,heap*=info,age*=info,safepoint*=info:file=/var/log/cassandra/gc.log:time,uptime,pid,tid,level:filecount=10,filesize=100M
--XX:+ExitOnOutOfMemoryError
--XX:+CrashOnOutOfMemoryError
-<% else -%>
--Xloggc:/var/log/cassandra/gc.log
--XX:+PrintGCDetails
--XX:+PrintGCDateStamps
--XX:+PrintHeapAtGC
--XX:+PrintTenuringDistribution
--XX:+PrintGCCause
--XX:+PrintGCApplicationStoppedTime
--XX:+PrintGCApplicationConcurrentTime
--XX:+UseGCLogFileRotation
--XX:NumberOfGCLogFiles=10
--XX:GCLogFileSize=100M
--XX:+HeapDumpOnOutOfMemoryError
--XX:HeapDumpPath=/var/lib/cassandra/java_heap_dumps
-<% end -%>
-<% end -%>
+<% end %>
 
-# General JVM options
--Dcassandra.jmx.local.port=7199
+# JMX options
 -Dcom.sun.management.jmxremote.port=7199
 -Dcom.sun.management.jmxremote.rmi.port=7199
 -Dcom.sun.management.jmxremote.authenticate=false
--Dcom.sun.management.jmxremote.password.file=/etc/cassandra/conf/jmxremote.password
--Dcom.sun.management.jmxremote.access.file=/etc/cassandra/conf/jmxremote.access
+-Dcom.sun.management.jmxremote.password.file=/etc/cassandra/jmxremote.password
+-Dcom.sun.management.jmxremote.access.file=/etc/cassandra/jmxremote.access
 -Dcom.sun.management.jmxremote.ssl=false
+
+# Other critical settings
+-Dcassandra.jamm.enable=true
+-Dcassandra.metrics.reporter.enabled=false
+-Dcassandra.ring_delay_ms=30000
+-Dcassandra.initial_token=
+<% if @replace_dead_node_ip and @replace_dead_node_ip != '' %>
+-Dcassandra.replace_address=<%= @replace_dead_node_ip %>
+<% end %>
 -Djava.net.preferIPv4Stack=true
--Dcom.datastax.bdp.cassandra.jamm.enabled=true
-
-# Jamm agent (requires jamm-0.3.2.jar in the classpath or managed by -javaagent)
--javaagent:/usr/share/cassandra/lib/jamm-0.3.2.jar
-
-# This is specific for replacing a dead node with a new IP address.
-<% if @replace_dead_node_ip and !@replace_dead_node_ip.empty? -%>
--Dcassandra.replace_address_first_boot=<%= @replace_dead_node_ip %>
-<% end -%>
-
-# Other common options
--ea # Enable assertions
 -Dlogback.configurationFile=logback.xml
--Dlogback.defaultConfigurationFile=logback-default.xml
+-Dlogback.disableJMX=true
 -Djava.awt.headless=true
+-ea
+-Xss256k # Recommended for Cassandra 4.x
 -Djdk.attach.allowAttachSelf=true

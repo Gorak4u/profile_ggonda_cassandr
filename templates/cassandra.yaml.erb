@@ -1,69 +1,52 @@
-<%#
-# Cassandra YAML Configuration Template
-# Managed by Puppet - profile_ggonda_cassandr
-%>
+# Cassandra YAML Configuration
+# Managed by Puppet, profile_ggonda_cassandr module
 
 cluster_name: '<%= @cluster_name %>'
-
-# Network Interfaces
-listen_address: <%= @::ipaddress %>
-rpc_address: <%= @::ipaddress %>
-
-start_rpc: <% if split(@cassandra_version, '.')[0].to_i < 4 -%>true<% else -%>false<% end -%>
-
-# Ports
-storage_port: 7000
-ssl_storage_port: 7001
-native_transport_port: 9042
-rpc_port: 9160
-
-speculative_retry: 99PERCENTILE
-
-# Seed nodes
+num_tokens: 256
 seed_provider:
     - class_name: org.apache.cassandra.locator.SimpleSeedProvider
       parameters:
           - seeds: "<%= @seeds %>"
 
-# Data and Commitlog Directories
-data_file_directories:
-    - <%= @data_dir %>
-commitlog_directory: <%= @commitlog_dir %>
-cassandra_disk_access_mode: auto
+listen_address: <%= @::ipaddress %>
+rpc_address: <%= @::ipaddress %>
 
-# Heap settings - refer to jvm-server.options for actual heap configuration
-# These are often overridden or derived. Included for C* compat.
-# -Xms<%= @max_heap_size %>
-# -Xmx<%= @max_heap_size %>
+# Ports
+storage_port: 7000
+ssl_storage_port: 7001
+native_transport_port: 9042
+# For Cassandra 3.x, start_rpc should be true. For 4.x+, it should be false (replaced by native_transport_port)
+<% if @cassandra_version =~ /^3\./ %>
+start_rpc: true
+rpc_port: 9160
+<% else %>
+start_rpc: false
+# rpc_port: 9160 # For compatibility, keep commented for 4.x+
+<% end %>
 
-# Authenticator and Authorizer
-authenticator: org.apache.cassandra.auth.PasswordAuthenticator
-authorizer: org.apache.cassandra.auth.CassandraAuthorizer
-
-# Snitch and Partitioner
 endpoint_snitch: GossipingPropertyFileSnitch
+
+data_file_directories:
+    - <%= @data_directory %>
+commitlog_directory: <%= @commitlog_directory %>
+
 partitioner: org.apache.cassandra.dht.Murmur3Partitioner
 
-# Compaction
-compaction_throughput_mb_per_sec: 16
+authenticator: org.apache.cassandra.auth.PasswordAuthenticator
+authorizer: org.apache.cassandra.auth.CassandraAuthorizer
+role_manager: org.apache.cassandra.auth.CassandraRoleManager
 
-# Caching
-key_cache_size_in_mb: <%= (@max_heap_size.gsub('G','').to_i * 0.05 * 1024).to_i if @max_heap_size =~ /G/ else (@max_heap_size.gsub('M','').to_i * 0.05).to_i %> # ~5% of heap
-row_cache_size_in_mb: 0 # Usually disabled
-
-# Other settings
 auto_snapshot: true
-commitlog_sync: periodic
-commitlog_sync_period_in_ms: 10000
 concurrent_reads: 32
 concurrent_writes: 32
-concurrent_compactors: 8
+concurrent_compactors: <%= [(processorcount / 2).to_i, 1].max %> # Roughly half of CPU cores
+compaction_throughput_mb_per_sec: 16 # Default is 16, good starting point
 
-# C* 4.x specific settings (add if condition if needed for C*3 support specifically)
-<% if split(@cassandra_version, '.')[0].to_i >= 4 -%>
-client_encryption_options:
-  enabled: false
-server_encryption_options:
-  internode_encryption: none
-  optional: false
-<% end -%>
+# Heap sizes (set in jvm-server.options, but often seen here in older configs)
+# This is typically configured in jvm-server.options now.
+# max_heap_size: <%= @max_heap_size %>
+
+# Rack-aware datacenter placement
+# To be configured in cassandra-rackdc.properties
+# dc: <%= @datacenter %>
+# rack: <%= @rack %>

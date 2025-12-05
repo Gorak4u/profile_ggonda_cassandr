@@ -5,68 +5,91 @@ describe 'profile_ggonda_cassandr' do
     context "on #{os}" do
       let(:facts) { os_facts }
 
-      # Mock the ipaddress fact for predictable testing
-      let(:facts) do
-        os_facts.merge({
-          :ipaddress => '192.168.1.100',
-        })
+      # Define default Hiera data for testing
+      let(:hiera_data) do
+        {
+          'profile_ggonda_cassandr::cassandra_version'          => '4.1.10-1',
+          'profile_ggonda_cassandr::java_version'               => '11',
+          'profile_ggonda_cassandr::cluster_name'               => 'Test Cluster',
+          'profile_ggonda_cassandr::seeds'                      => '10.0.0.1,10.0.0.2',
+          'profile_ggonda_cassandr::max_heap_size'              => '2G',
+          'profile_ggonda_cassandr::datacenter'                 => 'testdc',
+          'profile_ggonda_cassandr::rack'                       => 'testrack',
+          'profile_ggonda_cassandr::gc_type'                    => 'G1GC',
+          'profile_ggonda_cassandr::cassandra_user'             => 'cassandra',
+          'profile_ggonda_cassandr::cassandra_password'         => 'TestPassword123!',
+          'profile_ggonda_cassandr::data_directory'             => '/var/lib/cassandra/data',
+          'profile_ggonda_cassandr::commitlog_directory'        => '/var/lib/cassandra/commitlog',
+          'profile_ggonda_cassandr::disable_swap_tune_os'       => 'true',
+          'profile_ggonda_cassandr::replace_dead_node_ip'       => '',
+          'profile_ggonda_cassandr::enable_range_repair_script' => 'false'
+        }
       end
 
-      context 'with default parameters' do
-        it { is_expected.to compile.with_all_deps }
+      it { is_expected.to compile.with_all_deps }
 
-        it { is_expected.to contain_class('profile_ggonda_cassandr') }
+      it { is_expected.to contain_class('profile_ggonda_cassandr') }
 
-        it { is_expected.to contain_package('cassandra').with_ensure('4.1.10-1') }
-        it { is_expected.to contain_package('java-11-openjdk-headless').with_ensure('present') }
-        it { is_expected.to contain_file('/etc/cassandra/conf/cassandra.yaml').with_content(/cluster_name: Production Cluster/) }
-        it { is_expected.to contain_file('/etc/cassandra/conf/cassandra.yaml').with_content(/seeds: "192.168.1.10,192.168.1.11"/) }
-        it { is_expected.to contain_file('/etc/cassandra/conf/cassandra.yaml').with_content(/listen_address: 192.168.1.100/) }
-        it { is_expected.to contain_file('/etc/cassandra/conf/jvm-server.options').with_content(/-Xmx2G/) }
-        it { is_expected.to contain_file('/etc/cassandra/conf/jvm-server.options').with_content(/-XX:\+UseG1GC/) }
-        it { is_expected.to contain_service('cassandra').with_ensure('running').with_enable(true) }
-        it { is_expected.to contain_exec('change-cassandra-password').with_unless(/cqlsh -u cassandra -p 'PP\/C@ss@ndr@123' -e 'exit'/) }
+      # Basic checks for core resources
+      it { is_expected.to contain_package('cassandra').with_ensure('4.1.10-1') }
+      it { is_expected.to contain_service('cassandra').with_ensure('running').with_enable(true) }
+      it { is_expected.to contain_file('/etc/cassandra/conf/cassandra.yaml').with_content(/cluster_name: 'Test Cluster'/) }
+      it { is_expected.to contain_file('/etc/cassandra/conf/jvm-server.options').with_content(/-Xmx2G/) }
+      it { is_expected.to contain_file('/etc/cassandra/conf/cassandra-rackdc.properties').with_content(/dc=testdc/) }
 
-        # Ensure swapoff and fstab modification if disable_swap_tune_os is true (default)
-        it { is_expected.to contain_exec('swapoff -a') }
-        it { is_expected.to contain_file_line('disable_swap_in_fstab') }
+      it { is_expected.to contain_user('cassandra').with_ensure('present') }
+      it { is_expected.to contain_group('cassandra').with_ensure('present') }
+      it { is_expected.to contain_file('/var/lib/cassandra/data').with_ensure('directory') }
+      it { is_expected.to contain_file('/usr/share/cassandra/lib/jamm-0.3.2.jar').with_source('puppet:///modules/profile_ggonda_cassandr/jamm-0.3.2.jar') }
 
-        # Check for neutralized jvm-options files
-        it { is_expected.to contain_file('/etc/cassandra/conf/jvm8-server.options').with_content(/# Managed by Puppet. Neutralized/) }
-        it { is_expected.to contain_file('/etc/cassandra/conf/jvm11-server.options').with_content(/# Managed by Puppet. Neutralized/) }
-
-        # Check for jamm-0.3.2.jar
-        it { is_expected.to contain_file('/usr/share/cassandra/lib/jamm-0.3.2.jar').with_owner('cassandra').with_group('cassandra').with_mode('0644') }
+      # OS Tuning checks
+      if os_facts[:operatingsystemmajrelease].to_i >= 7
+        it { is_expected.to contain_file('/etc/fstab').with_content(/#\s+swap/) }
+        it { is_expected.to contain_file('/etc/sysctl.d/99-cassandra.conf').with_content(/vm.max_map_count/) }
+        it { is_expected.to contain_exec('apply-sysctl-cassandra').with_refreshonly(true) }
+        it { is_expected.to contain_file('/etc/security/limits.d/cassandra.conf').with_content(/cassandra - nofile 100000/) }
       end
 
-      context 'with disable_swap_tune_os set to false' do
-        let(:params) { { :disable_swap_tune_os => false } }
-        it { is_expected.to compile.with_all_deps }
-        it { is_expected.not_to contain_exec('swapoff -a') }
-        it { is_expected.not_to contain_file_line('disable_swap_in_fstab') }
+      # Yum repo check
+      it { is_expected.to contain_yumrepo('apache-cassandra').with_baseurl(%r{https://downloads.apache.org/cassandra/4.1.10-1/redhat/}) }
+      it { is_expected.to contain_yumrepo('apache-cassandra').with_gpgcheck(1) }
+      it { is_expected.to contain_yumrepo('apache-cassandra').with_gpgkey(%r{https://downloads.apache.org/cassandra/KEYS}) }
+
+      # Java package check
+      if os_facts[:osfamily] == 'RedHat' && os_facts[:operatingsystemmajrelease].to_i >= 7
+        it { is_expected.to contain_package('java-11-openjdk-devel').with_ensure('installed') }
       end
 
-      context 'with enable_range_repair_script set to true' do
-        let(:params) { { :enable_range_repair_script => true } }
-        it { is_expected.to compile.with_all_deps }
-        it { is_expected.to contain_file('/etc/systemd/system/range-repair.service') }
+      # Script deployment check (just one example)
+      it { is_expected.to contain_file('/usr/local/bin/check-versions.sh').with_mode('0755') }
+
+      # Password change exec (idempotency check)
+      it { is_expected.to contain_exec('change-cassandra-password').with_unless("cqlsh -u cassandra -p 'TestPassword123!' -e 'exit'") }
+      it { is_expected.to contain_exec('change-cassandra-password').with_command("cqlsh -u cassandra -p cassandra -e \"ALTER USER cassandra WITH PASSWORD 'TestPassword123!';\"") }
+
+      context 'with range repair script enabled' do
+        let(:hiera_data) do
+          super().merge('profile_ggonda_cassandr::enable_range_repair_script' => 'true')
+        end
+        it { is_expected.to contain_file('/etc/systemd/system/range-repair.service').with_content(/Description=Cassandra Range Repair Service/) }
         it { is_expected.to contain_service('range-repair').with_ensure('running').with_enable(true) }
       end
 
-      context 'with different Cassandra version' do
-        let(:params) { { :cassandra_version => '3.11.16' } }
-        it { is_expected.to compile.with_all_deps }
-        it { is_expected.to contain_package('cassandra').with_ensure('3.11.16') }
-        it { is_expected.to contain_file('/etc/cassandra/conf/cassandra.yaml').with_content(/start_rpc: true/) }
+      context 'with replace_dead_node_ip set' do
+        let(:hiera_data) do
+          super().merge('profile_ggonda_cassandr::replace_dead_node_ip' => '10.0.0.3')
+        end
+        it { is_expected.to contain_file('/etc/cassandra/conf/jvm-server.options').with_content(/-Dcassandra.replace_address=10.0.0.3/) }
       end
 
-      context 'with different Java version (e.g., 8)' do
-        let(:params) { { :java_version => '8' } }
-        it { is_expected.to compile.with_all_deps }
+      context 'with java version 8' do
+        let(:hiera_data) do
+          super().merge('profile_ggonda_cassandr::java_version' => '8')
+        end
+        it { is_expected.to contain_package('java-1.8.0-openjdk-devel').with_ensure('installed') }
         it { is_expected.to contain_file('/etc/cassandra/conf/jvm-server.options').with_content(/-Xloggc:\/var\/log\/cassandra\/gc.log/) }
-        it { is_expected.not_to contain_file('/etc/cassandra/conf/jvm-server.options').with_content(/^-Xlog:gc/) }
+        it { is_expected.to_not contain_file('/etc/cassandra/conf/jvm-server.options').with_content(/-Xlog:gc/) }
       end
-
     end
   end
-end
+}

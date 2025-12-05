@@ -8,248 +8,255 @@ class profile_ggonda_cassandr (
   $datacenter                  = hiera('profile_ggonda_cassandr::datacenter', 'dc1'),
   $rack                        = hiera('profile_ggonda_cassandr::rack', 'rack1'),
   $gc_type                     = hiera('profile_ggonda_cassandr::gc_type', 'G1GC'),
+  $cassandra_user              = hiera('profile_ggonda_cassandr::cassandra_user', 'cassandra'),
   $cassandra_password          = hiera('profile_ggonda_cassandr::cassandra_password', 'PP/C@ss@ndr@123'),
-  $data_dir                    = hiera('profile_ggonda_cassandr::data_dir', '/var/lib/cassandra/data'),
-  $commitlog_dir               = hiera('profile_ggonda_cassandr::commitlog_dir', '/var/lib/cassandra/commitlog'),
-  $disable_swap_tune_os        = hiera('profile_ggonda_cassandr::disable_swap_tune_os', true),
+  $data_directory              = hiera('profile_ggonda_cassandr::data_directory', '/var/lib/cassandra/data'),
+  $commitlog_directory         = hiera('profile_ggonda_cassandr::commitlog_directory', '/var/lib/cassandra/commitlog'),
+  $disable_swap_tune_os        = hiera('profile_ggonda_cassandr::disable_swap_tune_os', 'true'),
   $replace_dead_node_ip        = hiera('profile_ggonda_cassandr::replace_dead_node_ip', ''),
-  $enable_range_repair_script  = hiera('profile_ggonda_cassandr::enable_range_repair_script', false),
+  $enable_range_repair_script  = hiera('profile_ggonda_cassandr::enable_range_repair_script', 'false')
 ) {
 
-  # --- OS Tuning and Hardening ---
-  if "${disable_swap_tune_os}" == "true" {
-    exec { 'swapoff -a':
-      command => 'swapoff -a',
-      path    => ['/usr/bin', '/usr/sbin'],
-      onlyif  => 'grep -q swap /proc/swaps',
-      before  => File_line['disable_swap_in_fstab'],
-    }
+  # Ensure common tools are present
+  package { [
+    'curl',
+    'wget',
+    'vim',
+    'git',
+    'net-tools',
+    'iproute',
+    'rsync'
+  ]:
+    ensure => installed,
+  }
 
-    file_line { 'disable_swap_in_fstab':
-      path    => '/etc/fstab',
-      line    => '#UUID=xxxx-xxxx none swap sw 0 0 # Managed by Puppet to disable swap',
-      match   => '^\S+\s+none\s+swap\s+sw\s+0\s+0$',
-      replace => true,
-    }
-
-    sysctl { 'vm.max_map_count':
-      value   => '1048575',
-      comment => 'Cassandra requirement',
-    }
-
-    sysctl { 'fs.aio-max-nr':
-      value   => '1048576',
-      comment => 'Cassandra requirement',
-    }
-
-    file { '/etc/security/limits.d/cassandra.conf':
+  # OS Tuning
+  if "$disable_swap_tune_os" == "true" {
+    # Disable Swap
+    file { '/etc/fstab':
       ensure  => file,
+      content => regsubst(file('/etc/fstab'), '^([^#].*\s+swap\s+.*)$', '#\1', 'G'),
+      mode    => '0644',
       owner   => 'root',
       group   => 'root',
+    }
+
+    # Sysctl tuning for Cassandra
+    file { '/etc/sysctl.d/99-cassandra.conf':
+      ensure  => file,
+      content => "
+# Tuned for Cassandra\n
+vm.max_map_count = 1048575\n
+net.ipv4.tcp_keepalive_time = 600\n
+net.ipv4.tcp_keepalive_probes = 3\n
+net.ipv4.tcp_keepalive_intvl = 60\n
+net.core.somaxconn = 32768\n
+net.core.netdev_max_backlog = 10000\n
+net.ipv4.tcp_rmem = 4096 87380 16777216\n
+net.ipv4.tcp_wmem = 4096 87380 16777216\n",
       mode    => '0644',
-      content => """
-cassandra - memlock unlimited
-cassandra - nofile 1048575
-cassandra - nproc 65535
-""",
+      owner   => 'root',
+      group   => 'root',
+      notify  => Exec['apply-sysctl-cassandra'],
+    }
+
+    exec { 'apply-sysctl-cassandra':
+      command     => '/sbin/sysctl -p /etc/sysctl.d/99-cassandra.conf',
+      refreshonly => true,
+      tries       => 10,
+      try_sleep   => 10,
+    }
+
+    # Limits for Cassandra user
+    file { '/etc/security/limits.d/cassandra.conf':
+      ensure  => file,
+      content => "
+cassandra - memlock unlimited\n
+cassandra - nofile 100000\n
+cassandra - nproc 32768\n
+cassandra - as unlimited\n",
+      mode    => '0644',
+      owner   => 'root',
+      group   => 'root',
     }
   }
 
-  # --- YUM Repository for Cassandra ---
-  # EL7, EL8, EL9 support logic
-  $cassandra_repo_baseurl = $::operatingsystemmajrelease ? {
-    '7'     => 'https://downloads.apache.org/cassandra/${cassandra_version_major}/redhat/7/',
-    '8'     => 'https://downloads.apache.org/cassandra/${cassandra_version_major}/redhat/8/',
-    '9'     => 'https://downloads.apache.org/cassandra/${cassandra_version_major}/redhat/9/',
-    default => "https://downloads.apache.org/cassandra/${cassandra_version_major}/redhat/${::operatingsystemmajrelease}/", # Fallback
+  # YUM Repository for Cassandra
+  if ($::osfamily == 'RedHat') {
+    $release = $::operatingsystemmajrelease
+    if ($release == '7') {
+      $yum_baseurl = "https://downloads.apache.org/cassandra/${cassandra_version}/redhat/${release}"
+      $yum_gpgkey = "https://downloads.apache.org/cassandra/KEYS"
+    } elsif ($release == '8') {
+      $yum_baseurl = "https://downloads.apache.org/cassandra/${cassandra_version}/redhat/${release}"
+      $yum_gpgkey = "https://downloads.apache.org/cassandra/KEYS"
+    } elsif ($release == '9') {
+      $yum_baseurl = "https://downloads.apache.org/cassandra/${cassandra_version}/redhat/${release}"
+      $yum_gpgkey = "https://downloads.apache.org/cassandra/KEYS"
+    } else {
+      fail("Unsupported RedHat-based OS release for Cassandra repository: ${release}")
+    }
+
+    yumrepo { 'apache-cassandra':
+      descr    => 'Apache Cassandra Repository',
+      baseurl  => $yum_baseurl,
+      gpgcheck => 1,
+      gpgkey   => $yum_gpgkey,
+      enabled  => 1,
+      require  => Package['curl'],
+    }
+  } else {
+    fail("Unsupported OS family for Cassandra repository: ${::osfamily}")
   }
 
-  $cassandra_version_major = split($cassandra_version, '\.')[0]
-
-  yumrepo { 'cassandra':
-    descr    => "Apache Cassandra ${cassandra_version_major}.x Repository",
-    baseurl  => "https://downloads.apache.org/cassandra/${cassandra_version_major}/redhat/${::operatingsystemmajrelease}/",
-    enabled  => 1,
-    gpgcheck => 1,
-    gpgkey   => 'https://downloads.apache.org/cassandra/KEYS',
+  # Install Java
+  if "$java_version" == "11" {
+    package { 'java-11-openjdk-devel':
+      ensure => installed,
+    }
+    exec { 'set-java-home':
+      command => "/usr/sbin/alternatives --set java /usr/lib/jvm/java-11-openjdk/bin/java && \
+                  /usr/sbin/alternatives --set javac /usr/lib/jvm/java-11-openjdk/bin/javac",
+      unless  => "/usr/bin/java -version 2>&1 | grep 'openjdk version \"11.'",
+      path    => '/usr/bin:/usr/sbin:/bin',
+      require => Package['java-11-openjdk-devel'],
+    }
+  } elsif "$java_version" == "8" {
+    package { 'java-1.8.0-openjdk-devel':
+      ensure => installed,
+    }
+    exec { 'set-java-home':
+      command => "/usr/sbin/alternatives --set java /usr/lib/jvm/java-1.8.0-openjdk/jre/bin/java && \
+                  /usr/sbin/alternatives --set javac /usr/lib/jvm/java-1.8.0-openjdk/bin/javac",
+      unless  => "/usr/bin/java -version 2>&1 | grep 'openjdk version \"1.8.'",
+      path    => '/usr/bin:/usr/sbin:/bin',
+      require => Package['java-1.8.0-openjdk-devel'],
+    }
+  } else {
+    fail("Unsupported Java version: ${java_version}")
   }
 
-  # --- Packages ---
-  # Java
-  package { 'java-11-openjdk-headless':
-    ensure  => 'present',
+  # Install other required packages
+  package { [
+    'python3',
+    'jemalloc'
+  ]:
+    ensure  => installed,
+    require => Yumrepo['apache-cassandra'],
   }
 
-  # Cassandra
+  # Install Cassandra
   package { 'cassandra':
     ensure  => $cassandra_version,
-    require => Yumrepo['cassandra'],
+    require => [
+      Yumrepo['apache-cassandra'],
+      # Conditional Java package require
+      ("$java_version" == "11" ? Package['java-11-openjdk-devel'] : Package['java-1.8.0-openjdk-devel']),
+      Package['python3'],
+      Package['jemalloc'],
+    ],
   }
 
-  # Python for cqlsh
-  package { ['python3', 'python3-pip']:
-    ensure  => 'present',
-  }
-
-  # jemalloc for performance
-  package { 'jemalloc':
-    ensure  => 'present',
-  }
-
-  # --- Users and Directories ---
-  user { 'cassandra':
-    ensure     => 'present',
-    comment    => 'Cassandra Database User',
-    home       => '/var/lib/cassandra',
+  # Cassandra user and groups
+  user { $cassandra_user:
+    ensure     => present,
     shell      => '/sbin/nologin',
+    home       => '/var/lib/cassandra',
     managehome => false,
-    require    => Package['cassandra'], # Ensure package creates system user first
   }
 
-  group { 'cassandra':
-    ensure  => 'present',
-    require => Package['cassandra'],
+  group { $cassandra_user:
+    ensure => present,
   }
 
+  # Data and Commitlog Directories
+  file { [$data_directory, $commitlog_directory]:
+    ensure  => directory,
+    owner   => $cassandra_user,
+    group   => $cassandra_user,
+    mode    => '0755',
+    require => [User[$cassandra_user], Group[$cassandra_user]],
+  }
+
+  # Cassandra config directory
   file { '/etc/cassandra/conf':
     ensure  => directory,
-    owner   => 'cassandra',
-    group   => 'cassandra',
+    owner   => 'root',
+    group   => 'root',
     mode    => '0755',
-    require => Package['cassandra'],
+    recurse => true,
   }
 
-  file { $data_dir:
-    ensure  => directory,
-    owner   => 'cassandra',
-    group   => 'cassandra',
-    mode    => '0755',
-    require => User['cassandra'],
-  }
-
-  file { $commitlog_dir:
-    ensure  => directory,
-    owner   => 'cassandra',
-    group   => 'cassandra',
-    mode    => '0755',
-    require => User['cassandra'],
-  }
-
-  # --- Configuration Files ---
+  # Manage Cassandra config files from templates
   file { '/etc/cassandra/conf/cassandra.yaml':
     ensure  => file,
-    owner   => 'cassandra',
-    group   => 'cassandra',
-    mode    => '0644',
     content => template('profile_ggonda_cassandr/cassandra.yaml.erb'),
-    require => File['/etc/cassandra/conf'],
+    owner   => 'root',
+    group   => 'root',
+    mode    => '0644',
+    require => Package['cassandra'],
+    notify  => Service['cassandra'],
+  }
+
+  file { '/etc/cassandra/conf/jvm-server.options':
+    ensure  => file,
+    content => template('profile_ggonda_cassandr/jvm-server.options.erb'),
+    owner   => 'root',
+    group   => 'root',
+    mode    => '0644',
+    require => Package['cassandra'],
     notify  => Service['cassandra'],
   }
 
   file { '/etc/cassandra/conf/cassandra-rackdc.properties':
     ensure  => file,
-    owner   => 'cassandra',
-    group   => 'cassandra',
-    mode    => '0644',
     content => template('profile_ggonda_cassandr/cassandra-rackdc.properties.erb'),
-    require => File['/etc/cassandra/conf'],
-    notify  => Service['cassandra'],
-  }
-
-  # This template now manages the active JVM options, and is renamed to jvm-server.options
-  file { '/etc/cassandra/conf/jvm-server.options':
-    ensure  => file,
-    owner   => 'cassandra',
-    group   => 'cassandra',
+    owner   => 'root',
+    group   => 'root',
     mode    => '0644',
-    content => template('profile_ggonda_cassandr/jvm-server.options.erb'),
-    require => File['/etc/cassandra/conf'],
+    require => Package['cassandra'],
     notify  => Service['cassandra'],
   }
 
-  # Neutralize jvm8-server.options and jvm11-server.options to prevent conflicts
-  # as jvm-server.options is now dynamically sourced based on Java version.
-  file { '/etc/cassandra/conf/jvm8-server.options':
+  # Neutralize jvm8-server.options and jvm11-server.options
+  file { ['/etc/cassandra/conf/jvm8-server.options', '/etc/cassandra/conf/jvm11-server.options']:
     ensure  => file,
-    owner   => 'cassandra',
-    group   => 'cassandra',
+    content => '# Managed by Puppet. This file is intentionally empty or commented to prevent conflicting GC settings.\n',
+    owner   => 'root',
+    group   => 'root',
     mode    => '0644',
-    content => '# Managed by Puppet. Neutralized to prevent conflicting JVM options. Use jvm-server.options instead.',
-    require => File['/etc/cassandra/conf'],
+    require => Package['cassandra'],
     notify  => Service['cassandra'],
   }
 
-  file { '/etc/cassandra/conf/jvm11-server.options':
+  # Manage jamm-0.3.2.jar
+  file { '/usr/share/cassandra/lib/jamm-0.3.2.jar':
     ensure  => file,
-    owner   => 'cassandra',
-    group   => 'cassandra',
+    source  => 'puppet:///modules/profile_ggonda_cassandr/jamm-0.3.2.jar',
+    owner   => $cassandra_user,
+    group   => $cassandra_user,
     mode    => '0644',
-    content => '# Managed by Puppet. Neutralized to prevent conflicting JVM options. Use jvm-server.options instead.',
-    require => File['/etc/cassandra/conf'],
+    require => [Package['cassandra'], User[$cassandra_user], Group[$cassandra_user]],
     notify  => Service['cassandra'],
   }
 
-  # Cassandra environment variables, usually managed by the package
-  # This ensures it exists and is not overwritten by Puppet unless strictly necessary.
-  file { '/etc/cassandra/conf/cassandra-env.sh':
-    ensure  => file,
-    owner   => 'cassandra',
-    group   => 'cassandra',
-    mode    => '0755',
-    require => File['/etc/cassandra/conf'],
-  }
-
+  # Manage /root/.cassandra/cqlshrc
   file { '/root/.cassandra':
     ensure => directory,
     owner  => 'root',
     group  => 'root',
     mode   => '0700',
   }
-
   file { '/root/.cassandra/cqlshrc':
     ensure  => file,
+    content => template('profile_ggonda_cassandr/cqlshrc.erb'),
     owner   => 'root',
     group   => 'root',
     mode    => '0600',
-    content => template('profile_ggonda_cassandr/cqlshrc.erb'),
     require => File['/root/.cassandra'],
   }
 
-  # Manage jamm-0.3.2.jar
-  file { '/usr/share/cassandra/lib/jamm-0.3.2.jar':
-    ensure  => file,
-    owner   => 'cassandra',
-    group   => 'cassandra',
-    mode    => '0644',
-    source  => 'puppet:///modules/profile_ggonda_cassandr/jamm-0.3.2.jar',
-    require => Package['cassandra'],
-    notify  => Service['cassandra'],
-  }
-
-  # --- Cassandra Service ---
-  service { 'cassandra':
-    ensure     => 'running',
-    enable     => true,
-    hasstatus  => true,
-    hasrestart => true,
-    require    => [
-      Package['cassandra'],
-      File['/etc/cassandra/conf/cassandra.yaml'],
-      File['/etc/cassandra/conf/cassandra-rackdc.properties'],
-      File['/etc/cassandra/conf/jvm-server.options'],
-      File['/usr/share/cassandra/lib/jamm-0.3.2.jar'],
-    ],
-  }
-
-  # --- Scripts for /usr/local/bin ---
-  # Ensure /usr/local/bin exists
-  file { '/usr/local/bin':
-    ensure => directory,
-    owner  => 'root',
-    group  => 'root',
-    mode   => '0755',
-  }
-
+  # Deploy scripts to /usr/local/bin
   $scripts = [
     'check-versions.sh',
     'cluster-health.sh',
@@ -263,55 +270,74 @@ cassandra - nproc 65535
     'upgrade-sstables.sh',
     'backup-to-s3.sh',
     'prepare-replacement.sh',
-    'range-repair.sh',
+    'range-repair.sh'
   ]
 
   file { $scripts:
     ensure  => file,
-    path    => "/usr/local/bin/${name}",
+    path    => "/usr/local/bin/${title}",
     owner   => 'root',
     group   => 'root',
     mode    => '0755',
-    source  => "puppet:///modules/profile_ggonda_cassandr/${name}",
-    require => File['/usr/local/bin'],
+    source  => "puppet:///modules/profile_ggonda_cassandr/${title}",
+    require => Package['cassandra'],
   }
 
-  # --- Range Repair Systemd Service ---
-  if "${enable_range_repair_script}" == "true" {
+  # Range Repair Service (Systemd)
+  if "$enable_range_repair_script" == "true" {
     file { '/etc/systemd/system/range-repair.service':
       ensure  => file,
+      content => template('profile_ggonda_cassandr/range-repair.service.erb'),
       owner   => 'root',
       group   => 'root',
       mode    => '0644',
-      content => template('profile_ggonda_cassandr/range-repair.service.erb'),
       require => File['/usr/local/bin/range-repair.sh'],
-      notify  => Exec['systemctl-daemon-reload-range-repair'],
+      notify  => Exec['daemon-reload-range-repair'],
     }
 
-    exec { 'systemctl-daemon-reload-range-repair':
-      command     => '/usr/bin/systemctl daemon-reload',
+    exec { 'daemon-reload-range-repair':
+      command     => '/bin/systemctl daemon-reload',
       refreshonly => true,
-      subscribe   => File['/etc/systemd/system/range-repair.service'],
+      require     => File['/etc/systemd/system/range-repair.service'],
     }
 
     service { 'range-repair':
-      ensure    => 'running',
+      ensure    => running,
       enable    => true,
       subscribe => File['/etc/systemd/system/range-repair.service'],
-      require   => Exec['systemctl-daemon-reload-range-repair'],
+      require   => Exec['daemon-reload-range-repair'],
     }
   }
 
-  # --- Cassandra Password Change ---
+  # Cassandra Service
+  service { 'cassandra':
+    ensure    => running,
+    enable    => true,
+    subscribe => [
+      Package['cassandra'],
+      File['/etc/cassandra/conf/cassandra.yaml'],
+      File['/etc/cassandra/conf/jvm-server.options'],
+      File['/etc/cassandra/conf/cassandra-rackdc.properties'],
+      File['/usr/share/cassandra/lib/jamm-0.3.2.jar'],
+    ],
+    require   => [
+      Package['cassandra'],
+      File['/etc/cassandra/conf/cassandra.yaml'],
+      File['/etc/cassandra/conf/jvm-server.options'],
+      File['/etc/cassandra/conf/cassandra-rackdc.properties'],
+      File['/usr/share/cassandra/lib/jamm-0.3.2.jar'],
+    ],
+  }
+
+  # Password change for Cassandra user (idempotent)
   exec { 'change-cassandra-password':
-    command     => "cqlsh -u cassandra -p cassandra -e \"ALTER USER cassandra WITH PASSWORD '${cassandra_password}';\"",
-    path        => ['/usr/bin', '/usr/local/bin'],
+    command     => "cqlsh -u ${cassandra_user} -p ${cassandra_user} -e \"ALTER USER ${cassandra_user} WITH PASSWORD '${cassandra_password}';\"",
+    unless      => "cqlsh -u ${cassandra_user} -p '${cassandra_password}' -e 'exit'",
+    path        => ['/usr/bin', '/usr/sbin', '/bin'],
     user        => 'root',
-    logoutput   => true,
+    require     => Service['cassandra'],
+    refreshonly => false,
     tries       => 10,
     try_sleep   => 10,
-    unless      => "cqlsh -u cassandra -p '${cassandra_password}' -e 'exit'",
-    require     => Service['cassandra'],
-    timeout     => 60, # Allow sufficient time for cqlsh to connect and run
   }
 }

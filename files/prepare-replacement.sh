@@ -1,85 +1,80 @@
 #!/bin/bash
+# Script to prepare a node for replacement by checking gossip info and ensuring data is clean.
 
-# Script: prepare-replacement.sh
-# Description: Checks gossip information and provides guidance for replacing a Cassandra node.
-# This script helps ensure that the replacement process is started correctly.
+LOG_FILE="/var/log/cassandra/prepare-replacement.log"
 
 usage() {
   echo "Usage: $(basename "$0") [-h|--help]"
-  echo """This script assists in preparing for a Cassandra node replacement.
-- It checks the current gossip state to identify dead or removed nodes.
-- Provides instructions on how to start a new node as a replacement.
-"""
-  exit 0
+  echo "  Prepares a Cassandra node for replacement by checking gossip state and"
+  echo "  performing cleanup if necessary. This script does NOT replace the node itself."
+  echo "  It is a preliminary check before running 'nodetool replace' or similar."
+  echo "  Logs actions to $LOG_FILE."
+  echo ""
+  echo "Options:"
+  echo "  -h, --help    Display this help message."
 }
 
-# Parse command line arguments
 while [[ "$#" -gt 0 ]]; do
-  key="$1"
-  case $key in
+  case $1 in
     -h|--help)
       usage
+      exit 0
       ;;
     *)
-      echo "Unknown option: $1"
+      echo "Unknown parameter: $1"
       usage
+      exit 1
       ;;
   esac
   shift
 done
 
-LOG_TAG="cassandra-replace-prep"
-
-log_message() {
-  local level="$1"
-  local message="$2"
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$level] $message"
-  logger -t "$LOG_TAG" "[$level] $message"
+timestamp() {
+  date +"%Y-%m-%d %H:%M:%S"
 }
 
-log_message INFO "--- Preparing for Cassandra Node Replacement ---"
+log_message() {
+  echo "$(timestamp) $1" | tee -a "$LOG_FILE"
+}
 
-if ! command -v nodetool &> /dev/null; then
-  log_message ERROR "nodetool command not found. Is Cassandra installed and in PATH?"
+if ! command -v nodetool > /dev/null; then
+  log_message "Error: nodetool command not found. Please ensure Cassandra is installed."
   exit 1
-fi
+}
 
-# 1. Check nodetool status
-log_message INFO "Checking current cluster status via 'nodetool status'..."
-nodetool status
+log_message "--- Starting Node Replacement Preparation ---"
+
+# 1. Check nodetool gossipinfo for current node state
+log_message "Checking 'nodetool gossipinfo' for node state..."
+GOSSIP_INFO=$(nodetool gossipinfo 2>&1)
 if [ $? -ne 0 ]; then
-  log_message ERROR "'nodetool status' failed. Ensure Cassandra is running on at least one node in the cluster."
+  log_message "Error: Failed to get gossipinfo. Is Cassandra service running?"
   exit 1
 fi
 
-# 2. Check gossip info for dead or removed nodes
-log_message INFO "Checking 'nodetool gossipinfo' for dead or removed nodes..."
-if nodetool gossipinfo | grep -E '(STATUS: DOWN|STATUS: REMOVED)'; then
-  log_message WARNING "Detected DOWN or REMOVED nodes in gossipinfo. Verify if the node you intend to replace is truly gone."
-  log_message INFO "Consider running 'nodetool assassinate <ip_address>' on a healthy node if the old node is permanently dead."
-else
-  log_message INFO "No DOWN or REMOVED nodes detected in gossipinfo. Cluster appears stable."
+NODE_IP=$(hostname -I | awk '{print $1}')
+if [ -z "$NODE_IP" ]; then
+  log_message "Error: Could not determine current node IP."
+  exit 1
 fi
 
-# 3. Provide guidance for replacement
-log_message INFO "
---- Node Replacement Guidance ---
+NODE_STATE=$(echo "$GOSSIP_INFO" | grep -A 5 "$NODE_IP" | grep "STATUS:" | awk '{print $2}')
+log_message "Current node ($NODE_IP) state in gossip: ${NODE_STATE:-UNKNOWN}"
 
-To replace a dead Cassandra node with a new node at the same IP address:
-1.  Ensure the old node is permanently offline and its data directories are cleared.
-2.  Provision the new node with the same IP address and necessary Cassandra configuration.
-3.  Start Cassandra on the new node with the 'replace_address' JVM option set to the old node's IP.
-    This can be done by setting the 'profile_ggonda_cassandr::replace_dead_node_ip' Hiera parameter.
-    Example: -Dcassandra.replace_address_first_boot=<dead_node_ip_address>
-4.  Allow the new node to stream data and catch up with the cluster.
-5.  Verify the new node's status with 'nodetool status'.
+if [ "$NODE_STATE" != "NORMAL" ]; then
+  log_message "Warning: Node is not in NORMAL state. Proceed with caution."
+  log_message "It's recommended for a node to be in NORMAL state before replacement preparations."
+fi
 
-Example Puppet Hiera configuration for replacement (assuming the IP of the dead node was 192.168.1.50):
-profile_ggonda_cassandr::replace_dead_node_ip: '192.168.1.50'
+# 2. Suggest cleanup (if not already done)
+log_message "Suggesting 'nodetool cleanup' to remove any orphaned data..."
+log_message "Run '/usr/local/bin/cleanup-node.sh' if this hasn't been done recently."
 
-After replacement is complete and the new node is healthy, clear the 'replace_dead_node_ip' Hiera parameter
-to prevent accidental future replacements.
-"
+# 3. Suggest draining (if the node is running and about to be shut down)
+log_message "Suggesting 'nodetool drain' if the node is running and needs to be shut down cleanly."
+log_message "Run '/usr/local/bin/drain-node.sh' before stopping Cassandra service."
 
-log_message INFO "--- Preparation Complete. Proceed with replacement based on the guidance above. ---"
+log_message "--- Node Replacement Preparation: Complete (Manual steps may be required) ---"
+log_message "Review logs and perform 'cleanup-node.sh' and 'drain-node.sh' as appropriate."
+
 exit 0

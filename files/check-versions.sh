@@ -1,99 +1,84 @@
 #!/bin/bash
-
-# Script: check-versions.sh
-# Description: Audits and prints versions of key software components on the system.
-# Checks OS, Kernel, Puppet, Java, Cassandra, and Python versions.
+# Script to check and print versions of OS, Kernel, Puppet, Java, Cassandra, and Python.
 
 usage() {
   echo "Usage: $(basename "$0") [-h|--help]"
-  echo """This script audits and prints the versions of the following components:
-- Operating System
-- Kernel
-- Puppet Agent
-- Java Development Kit (JDK)
-- Apache Cassandra (via nodetool)
-- Python
-"""
-  exit 0
+  echo "  Checks and prints versions of various components related to Cassandra."
+  echo ""
+  echo "Options:"
+  echo "  -h, --help    Display this help message."
+  echo ""
+  echo "Components checked:"
+  echo "  - Operating System"
+  echo "  - Kernel"
+  echo "  - Puppet"
+  echo "  - Java"
+  echo "  - Cassandra (nodetool)"
+  echo "  - Python"
 }
 
 # Parse command line arguments
 while [[ "$#" -gt 0 ]]; do
-  key="$1"
-  case $key in
+  case $1 in
     -h|--help)
       usage
+      exit 0
       ;;
     *)
-      echo "Unknown option: $1"
+      echo "Unknown parameter: $1"
       usage
+      exit 1
       ;;
   esac
   shift
 done
 
-log_info() {
-  echo "[INFO] $1"
-}
+echo "--- System Versions ---"
 
-log_error() {
-  echo "[ERROR] $1" >&2
-}
-
-log_info "--- System Version Audit ---"
-
-# 1. Operating System Version
-log_info "Checking Operating System version..."
+# OS Version
+echo -n "Operating System: "
 if [ -f /etc/os-release ]; then
-  grep -E '^(NAME|VERSION)=' /etc/os-release | sed 's/"//g'
-elif [ -f /etc/redhat-release ]; then
-  cat /etc/redhat-release
+  grep PRETTY_NAME /etc/os-release | sed 's/PRETTY_NAME=//g' | sed 's/"//g'
 else
-  log_error "Could not determine OS version from /etc/os-release or /etc/redhat-release"
+  echo "Not found (/etc/os-release)"
 fi
-echo
 
-# 2. Kernel Version
-log_info "Checking Kernel version..."
+# Kernel Version
+echo -n "Kernel Version:   "
 uname -r
-echo
 
-# 3. Puppet Agent Version
-log_info "Checking Puppet Agent version..."
-if command -v puppet &> /dev/null; then
-  puppet --version
+# Puppet Version
+echo -n "Puppet Version:   "
+if command -v puppet > /dev/null; then
+  puppet -V
 else
-  log_error "Puppet command not found. Puppet Agent may not be installed or in PATH."
+  echo "Not installed"
 fi
-echo
 
-# 4. Java Version
-log_info "Checking Java version..."
-if command -v java &> /dev/null; then
-  java -version 2>&1 | grep -E 'version|openjdk version|Runtime Environment|Java HotSpot' | head -n 1
+# Java Version
+echo -n "Java Version:     "
+if command -v java > /dev/null; then
+  java -version 2>&1 | grep "version" | head -n 1
 else
-  log_error "Java command not found. Java may not be installed or in PATH."
+  echo "Not installed"
 fi
-echo
 
-# 5. Cassandra Version (via nodetool)
-log_info "Checking Cassandra version..."
-if command -v nodetool &> /dev/null; then
-  nodetool version
+# Cassandra Version (via nodetool)
+echo -n "Cassandra Version:"
+if command -v nodetool > /dev/null; then
+  nodetool version 2>/dev/null | grep "ReleaseVersion" | awk '{print $NF}'
 else
-  log_error "nodetool command not found. Cassandra may not be installed or in PATH."
+  echo "Not installed (nodetool not found)"
 fi
-echo
 
-# 6. Python Version
-log_info "Checking Python version..."
-if command -v python3 &> /dev/null; then
+# Python Version
+echo -n "Python Version:   "
+if command -v python3 > /dev/null; then
   python3 --version
-elif command -v python &> /dev/null; then
+elif command -v python > /dev/null; then
   python --version
 else
-  log_error "Python command not found. Python may not be installed or in PATH."
+  echo "Not installed"
 fi
-echo
 
-log_info "--- Audit Complete ---"
+echo "-----------------------"

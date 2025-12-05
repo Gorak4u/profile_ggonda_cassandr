@@ -1,68 +1,62 @@
 #!/bin/bash
+# Daemon script to continuously run 'nodetool repair -pr' and sleep for a period.
 
-# Script: range-repair.sh
-# Description: A daemon script to periodically run 'nodetool repair -pr'.
-# This script ensures continuous consistency maintenance for Cassandra data.
+PID_FILE="/var/run/cassandra_range_repair.pid"
+LOG_FILE="/var/log/cassandra/range-repair.log"
+SLEEP_SECONDS=432000 # 5 days (5 * 24 * 60 * 60)
 
-usage() {
-  echo "Usage: $(basename "$0") {start|stop|restart|status}"
-  echo """This script manages a daemon process that runs 'nodetool repair -pr' in a loop.
-Commands:
-  start    : Starts the range repair daemon.
-  stop     : Stops the range repair daemon.
-  restart  : Restarts the range repair daemon.
-  status   : Checks the status of the range repair daemon.
-
-Interval: The repair runs once every 5 days (432000 seconds).
-"""
-  exit 1
+timestamp() {
+  date +"%Y-%m-%d %H:%M:%S"
 }
 
-LOG_TAG="cassandra-range-repair"
-PID_FILE="/var/run/range-repair.pid"
-REPAIR_INTERVAL_SECONDS=432000 # 5 days
-
 log_message() {
-  local level="$1"
-  local message="$2"
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$level] $message"
-  logger -t "$LOG_TAG" "[$level] $message"
+  echo "$(timestamp) $1" | tee -a "$LOG_FILE"
 }
 
 run_repair_loop() {
-  log_message INFO "Range repair daemon started with PID $$"
-  echo $$ > "$PID_FILE"
-
+  log_message "Starting continuous range repair loop. Repair will run every ${SLEEP_SECONDS} seconds."
   while true; do
-    log_message INFO "Starting 'nodetool repair -pr' at $(date)"
-    if command -v nodetool &> /dev/null; then
-      nodetool repair -pr
+    log_message "Initiating 'nodetool repair -pr' at $(timestamp)"
+    if command -v nodetool > /dev/null; then
+      nodetool repair -pr 2>&1 | tee -a "$LOG_FILE"
       REPAIR_STATUS=$?
       if [ $REPAIR_STATUS -eq 0 ]; then
-        log_message INFO "'nodetool repair -pr' completed successfully."
+        log_message "Repair completed successfully."
       else
-        log_message ERROR "'nodetool repair -pr' failed with exit code $REPAIR_STATUS."
+        log_message "Repair failed with exit status $REPAIR_STATUS. Retrying after sleep."
       fi
     else
-      log_message ERROR "nodetool command not found. Cannot perform repair."
+      log_message "Error: nodetool command not found. Cannot perform repair. Exiting loop."
+      exit 1
     fi
 
-    log_message INFO "Sleeping for ${REPAIR_INTERVAL_SECONDS} seconds before next repair."
-    sleep "$REPAIR_INTERVAL_SECONDS"
+    log_message "Sleeping for ${SLEEP_SECONDS} seconds..."
+    sleep "$SLEEP_SECONDS"
   done
 }
 
 start() {
-  if [ -f "$PID_FILE" ] && kill -0 $(cat "$PID_FILE") 2>/dev/null; then
-    log_message INFO "Range repair daemon is already running (PID: $(cat "$PID_FILE"))."
-    exit 0
-  fi
-  log_message INFO "Starting range repair daemon..."
-  run_repair_loop & # Run in background
+  if [ -f "$PID_FILE" ]; then
+    PID=$(cat "$PID_FILE")
+    if ps -p "$PID" > /dev/null; then
+      log_message "Service is already running with PID $PID."
+      exit 0
+    else
+      log_message "Stale PID file found. Removing $PID_FILE."
+      rm -f "$PID_FILE"
+    fi
+  }
+
+  log_message "Starting range repair service."
+  (
+    run_repair_loop
+  ) & # Run in background
+  echo $! > "$PID_FILE" # Capture PID of the immediately preceding background command
   if [ $? -eq 0 ]; then
-    log_message INFO "Range repair daemon started."
+    log_message "Service started with PID $(cat "$PID_FILE")."
+    exit 0
   else
-    log_message ERROR "Failed to start range repair daemon."
+    log_message "Failed to start service."
     exit 1
   fi
 }
@@ -70,39 +64,59 @@ start() {
 stop() {
   if [ -f "$PID_FILE" ]; then
     PID=$(cat "$PID_FILE")
-    if kill -0 "$PID" 2>/dev/null; then
-      log_message INFO "Stopping range repair daemon (PID: ${PID})..."
+    if ps -p "$PID" > /dev/null; then
+      log_message "Stopping range repair service (PID $PID)."
       kill "$PID"
-      rm -f "$PID_FILE"
-      log_message INFO "Range repair daemon stopped."
+      if [ $? -eq 0 ]; then
+        rm -f "$PID_FILE"
+        log_message "Service stopped."
+        exit 0
+      else
+        log_message "Failed to stop service with kill $PID."
+        exit 1
+      fi
     else
-      log_message WARNING "PID file exists but process not found. Cleaning up PID file."
+      log_message "Service not running, but PID file $PID_FILE exists. Removing stale PID file."
       rm -f "$PID_FILE"
+      exit 0
     fi
   else
-    log_message INFO "Range repair daemon not running (PID file not found)."
+    log_message "Service is not running (PID file not found)."
+    exit 0
   fi
 }
 
 status() {
   if [ -f "$PID_FILE" ]; then
     PID=$(cat "$PID_FILE")
-    if kill -0 "$PID" 2>/dev/null; then
-      log_message INFO "Range repair daemon is running (PID: ${PID})."
+    if ps -p "$PID" > /dev/null; then
+      log_message "Range repair service is running with PID $PID."
       exit 0
     else
-      log_message WARNING "PID file exists but process is not running. PID file might be stale. PID: ${PID}."
-      exit 1
+      log_message "Range repair service is not running, but PID file $PID_FILE exists (stale)."
+      exit 3 # LSB: program is not running but status file exists
     fi
   else
-    log_message INFO "Range repair daemon is not running (PID file not found)."
-    exit 1
+    log_message "Range repair service is not running (PID file not found)."
+    exit 3 # LSB: program is not running
   fi
 }
 
 restart() {
   stop
   start
+}
+
+usage() {
+  echo "Usage: $(basename "$0") {start|stop|restart|status|--help}"
+  echo "  Manages the Cassandra range repair daemon. Runs 'nodetool repair -pr' in a loop."
+  echo ""
+  echo "Commands:"
+  echo "  start     Start the repair daemon."
+  echo "  stop      Stop the repair daemon."
+  echo "  restart   Restart the repair daemon."
+  echo "  status    Check the status of the repair daemon."
+  echo "  --help    Display this help message."
 }
 
 case "$1" in
@@ -118,9 +132,13 @@ case "$1" in
   status)
     status
     ;;
-  *)
+  --help)
     usage
+    exit 0
+    ;;
+  *)
+    echo "Unknown command: $1"
+    usage
+    exit 1
     ;;
 esac
-
-exit 0

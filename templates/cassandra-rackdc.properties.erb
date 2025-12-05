@@ -1,11 +1,6 @@
-<%#
-# Cassandra Rack-DC Properties Template
-# Managed by Puppet - profile_ggonda_cassandr
-%>
+# Cassandra RackDC Properties
+# Managed by Puppet, profile_ggonda_cassandr module
 
 dc=<%= @datacenter %>
 rack=<%= @rack %>
 prefer_local=true
-
-# This file is used by GossipingPropertyFileSnitch to determine the datacenter and rack
-# of the current node. It's crucial for correct data replication and locality aware routing.

@@ -1,60 +1,48 @@
 #!/bin/bash
+# Script to run 'nodetool repair -pr' on the current node.
 
-# Script: repair-node.sh
-# Description: Runs 'nodetool repair -pr' to repair primary ranges on the local node.
-# This helps maintain data consistency and availability.
+LOG_FILE="/var/log/cassandra/repair-node.log"
 
 usage() {
   echo "Usage: $(basename "$0") [-h|--help]"
-  echo """This script executes 'nodetool repair -pr' for the local Cassandra node.
-- It performs a primary range repair, which is often sufficient for regular maintenance.
-- Logs the start and end times of the repair operation.
-"""
-  exit 0
+  echo "  Runs 'nodetool repair -pr' (primary range) on the current Cassandra node."
+  echo "  Logs repair start and end times to $LOG_FILE."
+  echo ""
+  echo "Options:"
+  echo "  -h, --help    Display this help message."
 }
 
-# Parse command line arguments
 while [[ "$#" -gt 0 ]]; do
-  key="$1"
-  case $key in
+  case $1 in
     -h|--help)
       usage
+      exit 0
       ;;
     *)
-      echo "Unknown option: $1"
+      echo "Unknown parameter: $1"
       usage
+      exit 1
       ;;
   esac
   shift
 done
 
-LOG_TAG="cassandra-repair"
-
-log_message() {
-  local level="$1"
-  local message="$2"
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$level] $message"
-  logger -t "$LOG_TAG" "[$level] $message"
+timestamp() {
+  date +"%Y-%m-%d %H:%M:%S"
 }
 
-log_message INFO "--- Starting Cassandra Primary Range Repair ---"
-log_message INFO "Command: nodetool repair -pr"
+log_message() {
+  echo "$(timestamp) $1" | tee -a "$LOG_FILE"
+}
 
-if command -v nodetool &> /dev/null; then
-  START_TIME=$(date +%s)
-  nodetool repair -pr
-  REPAIR_STATUS=$?
-  END_TIME=$(date +%s)
-  DURATION=$((END_TIME - START_TIME))
-
-  if [ $REPAIR_STATUS -eq 0 ]; then
-    log_message INFO "Cassandra Primary Range Repair completed successfully in ${DURATION} seconds."
-    exit 0
-  else
-    log_message ERROR "Cassandra Primary Range Repair failed with exit code $REPAIR_STATUS after ${DURATION} seconds."
-    exit 1
-  fi
-else
-  log_message ERROR "nodetool command not found. Is Cassandra installed and in PATH?"
+if ! command -v nodetool > /dev/null; then
+  log_message "Error: nodetool command not found. Please ensure Cassandra is installed."
   exit 1
 fi
+
+log_message "Starting 'nodetool repair -pr' at $(timestamp)"
+nodetool repair -pr 2>&1 | tee -a "$LOG_FILE"
+REPAIR_STATUS=$?
+log_message "Finished 'nodetool repair -pr' at $(timestamp) with exit status $REPAIR_STATUS"
+
+exit $REPAIR_STATUS

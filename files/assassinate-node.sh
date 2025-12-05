@@ -1,87 +1,80 @@
 #!/bin/bash
+# Script to force remove a dead node from the cluster using nodetool assassinate.
 
-# Script: assassinate-node.sh
-# Description: Forcibly removes a dead Cassandra node from the cluster.
-# Use with extreme caution as this can lead to data loss if not used properly.
+NODE_IP=""
+LOG_FILE="/var/log/cassandra/assassinate-node.log"
 
 usage() {
-  echo "Usage: $(basename "$0") [-h|--help] <dead_node_ip_address>"
-  echo """This script executes 'nodetool assassinate' to forcibly remove a dead node.
-Arguments:
-  <dead_node_ip_address>  The IP address of the dead node to assassinate. This is a mandatory argument.
-
-Options:
-  -h, --help              Display this help message and exit.
-
-CRITICAL WARNING: This command should only be used when a node is permanently dead
-and cannot be brought back online. Incorrect usage can lead to data inconsistency
-or loss if the node eventually rejoins the cluster.
-"""
-  exit 1
+  echo "Usage: $(basename "$0") [-h|--help] -ip <node_ip>"
+  echo "  Runs 'nodetool assassinate <node_ip>' to force remove a dead node from the cluster."
+  echo "  USE WITH EXTREME CAUTION! This command can lead to data loss if used incorrectly."
+  echo "  Logs start and end times to $LOG_FILE."
+  echo ""
+  echo "Options:"
+  echo "  -h, --help    Display this help message."
+  echo "  -ip <node_ip> REQUIRED: IP address of the node to assassinate."
 }
 
-# Parse command line arguments
 while [[ "$#" -gt 0 ]]; do
-  key="$1"
-  case $key in
+  case $1 in
     -h|--help)
       usage
+      exit 0
+      ;;
+    -ip)
+      if [ -n "$2" ] && [[ "$2" != -* ]]; then
+        NODE_IP="$2"
+        shift
+      else
+        echo "Error: Argument for -ip <node_ip> is missing."
+        usage
+        exit 1
+      fi
       ;;
     *)
-      if [ -z "$DEAD_NODE_IP" ]; then
-        DEAD_NODE_IP="$1"
-      else
-        echo "Error: Too many arguments." >&2
-        usage
-      fi
+      echo "Unknown parameter: $1"
+      echo "Error: Unknown parameter: $1"
+      usage
+      exit 1
       ;;
   esac
   shift
 done
 
-if [ -z "$DEAD_NODE_IP" ]; then
-  echo "Error: Missing required argument <dead_node_ip_address>." >&2
+if [ -z "$NODE_IP" ]; then
+  echo "Error: Node IP (-ip) is required."
   usage
+  exit 1
 fi
 
-LOG_TAG="cassandra-assassinate"
-
-log_message() {
-  local level="$1"
-  local message="$2"
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$level] $message"
-  logger -t "$LOG_TAG" "[$level] $message"
+timestamp() {
+  date +"%Y-%m-%d %H:%M:%S"
 }
 
-log_message WARNING "!!! Initiating Assassination of DEAD NODE: ${DEAD_NODE_IP} !!!"
-log_message WARNING "Please ensure this node is permanently down and will not rejoin the cluster."
+log_message() {
+  echo "$(timestamp) $1" | tee -a "$LOG_FILE"
+}
 
-ASSASSINATE_CMD="nodetool assassinate ${DEAD_NODE_IP}"
-log_message INFO "Command: ${ASSASSINATE_CMD}"
+if ! command -v nodetool > /dev/null; then
+  log_message "Error: nodetool command not found. Please ensure Cassandra is installed."
+  exit 1
+}
 
-# Confirmation step to prevent accidental execution
-read -p "Type 'YES' to confirm assassination of ${DEAD_NODE_IP}: " CONFIRMATION
-if [[ "$CONFIRMATION" != "YES" ]]; then
-  log_message INFO "Assassination cancelled by user."
+log_message "WARNING: Attempting to assassinate node with IP: ${NODE_IP} at $(timestamp)"
+log_message "This is a destructive operation and should only be used as a last resort."
+log_message "Ensure the node is permanently dead and will not rejoin the cluster."
+
+echo "Are you absolutely sure you want to assassinate node ${NODE_IP}? Type 'yes' to proceed:"
+read CONFIRMATION
+
+if [ "$CONFIRMATION" != "yes" ]; then
+  log_message "Assassination cancelled by user."
   exit 0
 fi
 
-if command -v nodetool &> /dev/null; then
-  START_TIME=$(date +%s)
-  ${ASSASSINATE_CMD}
-  ASSASSINATE_STATUS=$?
-  END_TIME=$(date +%s)
-  DURATION=$((END_TIME - START_TIME))
+log_message "Confirmed. Executing 'nodetool assassinate ${NODE_IP}'..."
+nodetool assassinate "${NODE_IP}" 2>&1 | tee -a "$LOG_FILE"
+ASSASSINATE_STATUS=$?
+log_message "Finished 'nodetool assassinate ${NODE_IP}' at $(timestamp) with exit status $ASSASSINATE_STATUS"
 
-  if [ $ASSASSINATE_STATUS -eq 0 ]; then
-    log_message INFO "Node ${DEAD_NODE_IP} successfully assassinated in ${DURATION} seconds."
-    log_message WARNING "Data from ${DEAD_NODE_IP} is now gone from the cluster. A repair may be needed on other nodes."
-    exit 0
-  else
-    log_message ERROR "Node assassination for ${DEAD_NODE_IP} failed with exit code $ASSASSINATE_STATUS after ${DURATION} seconds."
-    exit 1
-  fi
-else
-  log_message ERROR "nodetool command not found. Is Cassandra installed and in PATH?"
-  exit 1
-fi
+exit $ASSASSINATE_STATUS

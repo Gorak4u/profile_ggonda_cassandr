@@ -1,61 +1,49 @@
 #!/bin/bash
+# Script to run 'nodetool drain' on the current node.
 
-# Script: drain-node.sh
-# Description: Drains the local Cassandra node.
-# This command flushes all memtables to disk and stops accepting writes without shutting down the JVM.
+LOG_FILE="/var/log/cassandra/drain-node.log"
 
 usage() {
   echo "Usage: $(basename "$0") [-h|--help]"
-  echo """This script executes 'nodetool drain' for the local Cassandra node.
-- Flushes all in-memory data (memtables) to disk (SSTables).
-- Stops listening for client connections and shuts down the native transport and Thrift server.
-- Useful before a planned shutdown or restart of the Cassandra process.
-"""
-  exit 0
+  echo "  Runs 'nodetool drain' on the current Cassandra node to flush all memtables"
+  echo "  to disk and stop listening for client connections, preparing for shutdown."
+  echo "  Logs drain start and end times to $LOG_FILE."
+  echo ""
+  echo "Options:"
+  echo "  -h, --help    Display this help message."
 }
 
-# Parse command line arguments
 while [[ "$#" -gt 0 ]]; do
-  key="$1"
-  case $key in
+  case $1 in
     -h|--help)
       usage
+      exit 0
       ;;
     *)
-      echo "Unknown option: $1"
+      echo "Unknown parameter: $1"
       usage
+      exit 1
       ;;
   esac
   shift
 done
 
-LOG_TAG="cassandra-drain"
-
-log_message() {
-  local level="$1"
-  local message="$2"
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$level] $message"
-  logger -t "$LOG_TAG" "[$level] $message"
+timestamp() {
+  date +"%Y-%m-%d %H:%M:%S"
 }
 
-log_message INFO "--- Starting Cassandra Node Drain ---"
-log_message INFO "Command: nodetool drain"
+log_message() {
+  echo "$(timestamp) $1" | tee -a "$LOG_FILE"
+}
 
-if command -v nodetool &> /dev/null; then
-  START_TIME=$(date +%s)
-  nodetool drain
-  DRAIN_STATUS=$?
-  END_TIME=$(date +%s)
-  DURATION=$((END_TIME - START_TIME))
-
-  if [ $DRAIN_STATUS -eq 0 ]; then
-    log_message INFO "Cassandra Node Drain completed successfully in ${DURATION} seconds."
-    exit 0
-  else
-    log_message ERROR "Cassandra Node Drain failed with exit code $DRAIN_STATUS after ${DURATION} seconds."
-    exit 1
-  fi
-else
-  log_message ERROR "nodetool command not found. Is Cassandra installed and in PATH?"
+if ! command -v nodetool > /dev/null; then
+  log_message "Error: nodetool command not found. Please ensure Cassandra is installed."
   exit 1
-fi
+}
+
+log_message "Starting 'nodetool drain' at $(timestamp)"
+nodetool drain 2>&1 | tee -a "$LOG_FILE"
+DRAIN_STATUS=$?
+log_message "Finished 'nodetool drain' at $(timestamp) with exit status $DRAIN_STATUS"
+
+exit $DRAIN_STATUS
